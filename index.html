@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>オレンジ君ジャンプ</title>
+<link rel="stylesheet" href="css/style.css?v=1">
+</head>
+<body>
+
+<div id="rotate-overlay">
+  <div class="rotate-icon">📱</div>
+  <p>横向きにして遊んでね</p>
+</div>
+
+<div id="game-wrap">
+  <div id="hud">
+    <span id="score">00000</span>
+    <span id="best">HI 00000</span>
+  </div>
+  <canvas id="game" width="800" height="300"></canvas>
+  <div id="message">
+    <p id="message-text">タップ or スペースキーでスタート</p>
+  </div>
+</div>
+
+<script src="js/game.js?v=1"></script>
+</body>
+</html>

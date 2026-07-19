@@ -1,0 +1,97 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+}
+
+html, body {
+  width: 100%;
+  height: 100%;
+  background: #f7f7f7;
+  overflow: hidden;
+  touch-action: manipulation;
+  font-family: -apple-system, "Hiragino Sans", sans-serif;
+}
+
+#rotate-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  background: #f7f7f7;
+  color: #535353;
+}
+
+.rotate-icon {
+  font-size: 48px;
+  transform: rotate(90deg);
+  animation: rotate-hint 1.6s ease-in-out infinite;
+}
+
+@keyframes rotate-hint {
+  0%, 100% { transform: rotate(90deg); }
+  50% { transform: rotate(0deg); }
+}
+
+#game-wrap {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+}
+
+#hud {
+  position: absolute;
+  top: 12px;
+  right: max(16px, env(safe-area-inset-right));
+  display: flex;
+  gap: 16px;
+  font-family: "Courier New", monospace;
+  font-weight: bold;
+  font-size: 16px;
+  color: #535353;
+  letter-spacing: 1px;
+  z-index: 5;
+}
+
+#game {
+  width: min(100vw, 177.7vh);
+  height: min(56.25vw, 100vh);
+  max-width: 800px;
+  max-height: 300px;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+  background: #f7f7f7;
+  display: block;
+}
+
+#message {
+  position: absolute;
+  top: 45%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  text-align: center;
+  color: #535353;
+  font-size: 14px;
+  pointer-events: none;
+  z-index: 5;
+}
+
+#message.hidden {
+  display: none;
+}
+
+/* portrait: force user to rotate */
+@media (orientation: portrait) {
+  #rotate-overlay { display: flex; }
+  #game-wrap { display: none; }
+}
