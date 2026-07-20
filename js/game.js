@@ -252,5 +252,9 @@
   canvas.addEventListener('pointerdown', onInput, { passive: false });
   document.getElementById('message').addEventListener('pointerdown', onInput, { passive: false });
 
+  // iOSのダブルタップ／連続タップによるズームを抑止
+  document.addEventListener('touchend', e => e.preventDefault(), { passive: false });
+  document.addEventListener('gesturestart', e => e.preventDefault());
+
   resetGame();
 })();
