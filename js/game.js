@@ -264,6 +264,15 @@
   let flash = 0;
   let highScore = Number(localStorage.getItem(HIGH_SCORE_KEY) || 0);
 
+  // URLの印で途中から開始できる（例: ...?boss ／ ...?finale）確認用
+  const BOSS_START = STAGES.slice(0, 5).reduce((s, st) => s + st.len, 0); // 100000
+  const params = new URLSearchParams(location.search);
+  let startDistance = 0;
+  if (params.has('boss')) startDistance = BOSS_START;
+  else if (params.has('finale')) startDistance = BOSS_START + FINALE_AT - 1000;
+  else if (params.has('d')) startDistance = Number(params.get('d')) || 0;
+  const isDebugStart = startDistance > 0;
+
   bestEl.textContent = 'HI ' + String(highScore).padStart(5, '0');
 
   function resetGame() {
@@ -272,7 +281,7 @@
     for (let i = 0; i < 3; i++) clouds.push({ x: Math.random() * W, y: 30 + Math.random() * 60 });
     groundOffset = 0;
     speed = START_SPEED;
-    distance = 0;
+    distance = startDistance;
     lives = MAX_LIVES;
     hurtTimer = 0;
     currentStageIndex = -1;
@@ -452,7 +461,7 @@
   function endGame() {
     state = 'over';
     const finalScore = Math.floor(distance / 10);
-    if (finalScore > highScore) {
+    if (!isDebugStart && finalScore > highScore) {
       highScore = finalScore;
       localStorage.setItem(HIGH_SCORE_KEY, String(highScore));
     }
