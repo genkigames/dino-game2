@@ -21,28 +21,49 @@
   const HIGH_SCORE_KEY = 'orange-jump-highscore';
   const MAX_LIVES = 3;
 
-  // ステージ設定
+  // ステージ設定（順にステージ1〜5、末尾までいくと先頭に戻る）
   const START_SPEED = 0.42;      // 各ステージの開始スピード
   const STAGE_LEN = 20000;       // 1ステージの距離
   const STAGE_RAMP = 2000;       // 開始から最大スピードに到達するまでの距離
-  const STAGE_MAX_SPEEDS = [0.52, 0.62, 0.82]; // ステージ1・2・3の最大スピード
+  const SPAWN_START = 2000;      // この距離までは障害物を出さない（＝加速中は安全）
+  const SPAWN_END = STAGE_LEN - 1200; // この距離を過ぎたら障害物を出さない（クリア前を安全に）
+  const STAGES = [
+    { max: 0.52, types: [1] },              // ステージ1
+    { max: 0.62, types: [1, 2] },           // ステージ2
+    { max: 0.62, types: [1, 2, 3] },        // ステージ3
+    { max: 0.82, types: [1] },              // ステージ4
+    { max: 0.52, types: [1, 2, 3], dense: true }, // ステージ5（多め）
+  ];
 
   const HEART_ITEM_PIX = 4;      // 流れてくるハートのドットサイズ
   const HEART_ITEM_W = 7 * HEART_ITEM_PIX;
   const HEART_ITEM_H = 6 * HEART_ITEM_PIX;
   const HEART_ITEM_Y = 150;      // ジャンプで届く高さ
 
+  const WALL_W = 14;             // 障害物2（2段ジャンプでしか越えられない壁）
+  const WALL_H = 78;
+
+  const FLYER_PIX = 4;           // 障害物3（飛翔物）
+  const FLYER_COLS = 13;
+  const FLYER_ROWS = 7;
+  const FLYER_W = FLYER_COLS * FLYER_PIX;
+  const FLYER_H = FLYER_ROWS * FLYER_PIX;
+  const FLYER_Y = 92;            // 2段ジャンプの頂点に当たる高さ
+
   function stageInfo(dist) {
+    const n = STAGES.length;
     const idx = Math.floor(dist / STAGE_LEN);
+    const cfg = STAGES[idx % n];
     return {
       idx: idx,
-      num: (idx % 3) + 1,
-      max: STAGE_MAX_SPEEDS[idx % 3],
+      num: (idx % n) + 1,
+      max: cfg.max,
+      cfg: cfg,
       dIn: dist - idx * STAGE_LEN,
     };
   }
 
-  // 9x8 pixel grid for the character body (top part, shared by all frames)
+  // キャラのドット絵
   const BODY_ROWS = [
     '001111100',
     '011111110',
@@ -64,7 +85,27 @@
     '0001000',
   ];
 
-  const PIX = 5; // pixel size for the character sprite
+  // プテラノドン（左向き・翼の上下2フレーム）
+  const PTERO_A = [
+    '0000000011000',
+    '0000000110000',
+    '0000011100000',
+    '1111111100000',
+    '0111111000000',
+    '0000110000000',
+    '0000000000000',
+  ];
+  const PTERO_B = [
+    '0000000000000',
+    '0000110000000',
+    '1111111100000',
+    '0111111000000',
+    '0000011100000',
+    '0000000110000',
+    '0000000011000',
+  ];
+
+  const PIX = 5; // キャラのドットサイズ
   const CHAR_COLS = 9;
   const CHAR_ROWS_BODY = BODY_ROWS.length;
   const CHAR_W = CHAR_COLS * PIX;
@@ -102,6 +143,18 @@
     }
   }
 
+  function drawFlyer(x, y) {
+    const rows = flyerFrame === 0 ? PTERO_A : PTERO_B;
+    ctx.fillStyle = COLOR_OBSTACLE;
+    for (let r = 0; r < rows.length; r++) {
+      for (let c = 0; c < rows[r].length; c++) {
+        if (rows[r][c] === '1') {
+          ctx.fillRect(x + c * FLYER_PIX, y + r * FLYER_PIX, FLYER_PIX, FLYER_PIX);
+        }
+      }
+    }
+  }
+
   const player = {
     x: 60,
     y: GROUND_Y - CHAR_H,
@@ -129,6 +182,8 @@
   let stageHeartDone = false;    // このステージのハートを出したか
   let heartItem = null;          // 流れてくるハート {x, y}
   let banner = null;             // ステージ表示 {text, x}
+  let flyerFrame = 0;
+  let flyerAnimTimer = 0;
   let highScore = Number(localStorage.getItem(HIGH_SCORE_KEY) || 0);
 
   bestEl.textContent = 'HI ' + String(highScore).padStart(5, '0');
@@ -148,15 +203,18 @@
     stageHeartDone = false;
     heartItem = null;
     banner = null;
+    flyerFrame = 0;
+    flyerAnimTimer = 0;
     player.y = GROUND_Y - CHAR_H;
     player.vy = 0;
     player.onGround = true;
     player.jumpsLeft = 2;
-    nextObstacleAt = 600 + Math.random() * 400;
+    nextObstacleAt = SPAWN_START;
     scoreEl.textContent = '00000';
   }
 
-  function spawnObstacle() {
+  // 障害物1（群）
+  function spawnGroup() {
     const shapes = [
       [{ w: 12, h: 30 }],
       [{ w: 12, h: 45 }],
@@ -171,7 +229,60 @@
       return part;
     });
     const totalW = offsetX - 2;
-    obstacles.push({ x: W + 20, w: totalW, parts, passed: false });
+    obstacles.push({ kind: 'ground', x: W + 20, w: totalW, parts: parts });
+  }
+
+  // 障害物2（壁）
+  function spawnWall() {
+    obstacles.push({
+      kind: 'ground', x: W + 20, w: WALL_W,
+      parts: [{ x: 0, w: WALL_W, h: WALL_H }],
+    });
+  }
+
+  // 障害物3（飛翔物）
+  function spawnFlyer() {
+    obstacles.push({ kind: 'flyer', x: W + 20, y: FLYER_Y, w: FLYER_W });
+  }
+
+  function spawnForStage(cfg) {
+    const canFly = cfg.types.indexOf(3) >= 0;
+    const canWall = cfg.types.indexOf(2) >= 0;
+    if (canFly && Math.random() < 0.35) {
+      spawnFlyer();
+      // 飛翔物は障害物1（群）とだけ同時に出ることがある
+      if (Math.random() < 0.5) spawnGroup();
+    } else if (canWall && Math.random() < 0.45) {
+      spawnWall();
+    } else {
+      spawnGroup();
+    }
+  }
+
+  // プレイヤーが障害物に当たっているか
+  function hitsObstacle() {
+    const px1 = player.x + HITBOX_MX;
+    const px2 = player.x + CHAR_W - HITBOX_MX;
+    const py1 = player.y + HITBOX_TOP;
+    const py2 = player.y + CHAR_H - HITBOX_BOTTOM;
+    for (const ob of obstacles) {
+      if (ob.kind === 'flyer') {
+        const fx1 = ob.x + 1 * FLYER_PIX;
+        const fx2 = ob.x + (FLYER_COLS - 2) * FLYER_PIX;
+        const fy1 = ob.y + 1 * FLYER_PIX;
+        const fy2 = ob.y + 6 * FLYER_PIX;
+        if (px2 > fx1 && px1 < fx2 && py2 > fy1 && py1 < fy2) return true;
+      } else {
+        for (const part of ob.parts) {
+          const ox1 = ob.x + part.x;
+          const ox2 = ox1 + part.w;
+          const oy1 = GROUND_Y - part.h;
+          const oy2 = GROUND_Y;
+          if (px2 > ox1 && px1 < ox2 && py2 > oy1 && py1 < oy2) return true;
+        }
+      }
+    }
+    return false;
   }
 
   function jump() {
@@ -227,11 +338,16 @@
       stageHeartDone = false;
       stageHeartSpawnAt = si.idx * STAGE_LEN + 4000 + Math.random() * 10000;
       heartItem = null;
+      obstacles = []; // 境界をクリーンにして事故を防ぐ
+      nextObstacleAt = si.idx * STAGE_LEN + SPAWN_START + Math.random() * 500;
     }
 
     groundOffset = (groundOffset + speed * dt) % 20;
 
     if (hurtTimer > 0) hurtTimer -= dt;
+
+    flyerAnimTimer += dt;
+    if (flyerAnimTimer > 180) { flyerAnimTimer = 0; flyerFrame = 1 - flyerFrame; }
 
     if (banner) {
       banner.x -= speed * dt * 0.5;
@@ -263,9 +379,11 @@
       }
     }
 
-    if (distance > nextObstacleAt) {
-      spawnObstacle();
-      nextObstacleAt = distance + 400 + Math.random() * 500;
+    // 障害物の出現（加速中とクリア直前は出さない）
+    if (si.dIn >= SPAWN_START && si.dIn <= SPAWN_END && distance > nextObstacleAt) {
+      spawnForStage(si.cfg);
+      const gap = si.cfg.dense ? (240 + Math.random() * 280) : (420 + Math.random() * 520);
+      nextObstacleAt = distance + gap;
     }
 
     obstacles.forEach(ob => { ob.x -= speed * dt; });
@@ -292,33 +410,13 @@
       }
     }
 
-    if (hurtTimer <= 0) {
-      const px1 = player.x + HITBOX_MX;
-      const px2 = player.x + CHAR_W - HITBOX_MX;
-      const py1 = player.y + HITBOX_TOP;
-      const py2 = player.y + CHAR_H - HITBOX_BOTTOM;
-      let hit = false;
-      for (const ob of obstacles) {
-        for (const part of ob.parts) {
-          const ox1 = ob.x + part.x;
-          const ox2 = ox1 + part.w;
-          const oy1 = GROUND_Y - part.h;
-          const oy2 = GROUND_Y;
-          if (px2 > ox1 && px1 < ox2 && py2 > oy1 && py1 < oy2) {
-            hit = true;
-            break;
-          }
-        }
-        if (hit) break;
+    if (hurtTimer <= 0 && hitsObstacle()) {
+      lives--;
+      if (lives <= 0) {
+        endGame();
+        return;
       }
-      if (hit) {
-        lives--;
-        if (lives <= 0) {
-          endGame();
-          return;
-        }
-        hurtTimer = 1000;
-      }
+      hurtTimer = 1000;
     }
   }
 
@@ -345,11 +443,15 @@
       ctx.fillRect(x, GROUND_Y + 4, 10, 2);
     }
 
-    ctx.fillStyle = COLOR_OBSTACLE;
     obstacles.forEach(ob => {
-      ob.parts.forEach(part => {
-        ctx.fillRect(ob.x + part.x, GROUND_Y - part.h, part.w, part.h);
-      });
+      if (ob.kind === 'flyer') {
+        drawFlyer(ob.x, ob.y);
+      } else {
+        ctx.fillStyle = COLOR_OBSTACLE;
+        ob.parts.forEach(part => {
+          ctx.fillRect(ob.x + part.x, GROUND_Y - part.h, part.w, part.h);
+        });
+      }
     });
 
     // 流れてくる回復ハート
@@ -383,6 +485,15 @@
       }
     }
     if (visible) drawSprite(legs, drawX, drawY, bodyColor);
+
+    // 画面下部のステージ進捗バー
+    const baseIdx = Math.max(0, currentStageIndex);
+    const prog = Math.min(1, Math.max(0, (distance - baseIdx * STAGE_LEN) / STAGE_LEN));
+    const barY = H - 5;
+    ctx.fillStyle = COLOR_HEART_EMPTY;
+    ctx.fillRect(0, barY, W, 3);
+    ctx.fillStyle = COLOR_BODY;
+    ctx.fillRect(0, barY, W * prog, 3);
   }
 
   function loop(ts) {
