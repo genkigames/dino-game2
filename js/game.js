@@ -102,7 +102,13 @@
   const BOSS_W = BOSS[0].length * BOSS_PIX;
   const BOSS_H = BOSS.length * BOSS_PIX;
   const BOSS_X = W - BOSS_W - 12;
-  const BOSS_BASE_Y = 50;
+  const BOSS_BASE_Y = 95;        // 空中の中央あたり
+
+  // 決着演出のタイミング
+  const CHARGE_MS = 1400;        // チャージ（従来の2倍）
+  const FIRE_EXTEND_MS = 520;    // ビームが伸びてボスに届くまで
+  const FIRE_EXPLODE_AT = 1500;  // 発射演出の後半で爆発
+  const FIRE_END_MS = 2100;      // 発射演出の終わり
 
   // キャラのドット絵
   const BODY_ROWS = [
@@ -203,21 +209,51 @@
     ctx.fillRect(ob.x - 3, ob.y, 6, ob.h);
   }
 
-  function drawBoss() {
-    const by = BOSS_BASE_Y + Math.sin(bossBob) * 6;
-    if (bossCharge > 0) {
-      ctx.fillStyle = 'rgba(123,255,234,' + (0.45 * bossCharge) + ')';
-      ctx.fillRect(BOSS_X - 12, by - 12, BOSS_W + 24, BOSS_H + 24);
-    }
-    ctx.fillStyle = COLOR_BOSS;
-    for (let r = 0; r < BOSS.length; r++) {
-      for (let c = 0; c < BOSS[r].length; c++) {
-        if (BOSS[r][c] === '1') ctx.fillRect(BOSS_X + c * BOSS_PIX, by + r * BOSS_PIX, BOSS_PIX, BOSS_PIX);
+  // ドット絵をそのままの形で塗る（オーラ用のシルエット描画にも使う）
+  function fillCells(rows, x, y, pix) {
+    for (let r = 0; r < rows.length; r++) {
+      for (let c = 0; c < rows[r].length; c++) {
+        if (rows[r][c] === '1') ctx.fillRect(x + c * pix, y + r * pix, pix, pix);
       }
     }
-    ctx.fillStyle = COLOR_BOSS_DARK;
-    ctx.fillRect(BOSS_X + 3 * BOSS_PIX, by + 5 * BOSS_PIX, BOSS_PIX * 2, BOSS_PIX * 2);
-    ctx.fillRect(BOSS_X + 10 * BOSS_PIX, by + 5 * BOSS_PIX, BOSS_PIX * 2, BOSS_PIX * 2);
+  }
+
+  // キャラの形に沿ったオーラ（真四角にならないよう周囲8方向にずらして重ねる）
+  const AURA_OFFSETS = [[-1, 0], [1, 0], [0, -1], [0, 1], [-1, -1], [1, -1], [-1, 1], [1, 1]];
+  function drawAura(rows, x, y, pix, color, alpha, spread) {
+    ctx.fillStyle = color;
+    for (let i = 0; i < AURA_OFFSETS.length; i++) {
+      ctx.globalAlpha = alpha;
+      fillCells(rows, x + AURA_OFFSETS[i][0] * spread, y + AURA_OFFSETS[i][1] * spread, pix);
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  function bossDrawY() {
+    return BOSS_BASE_Y + Math.sin(bossBob) * 6;
+  }
+
+  function drawBoss() {
+    let bx = BOSS_X, by = bossDrawY();
+    let bodyColor = COLOR_BOSS, eyeColor = COLOR_BOSS_DARK;
+    if (bossHurt) { // 被弾中は自キャラと同じ赤で震える
+      bodyColor = COLOR_HURT; eyeColor = '#7a1712';
+      bx += (Math.random() - 0.5) * 8;
+      by += (Math.random() - 0.5) * 8;
+    }
+    // チャージのオーラ（ボスの形に沿わせる）
+    if (bossCharge > 0) {
+      drawAura(BOSS, bx, by, BOSS_PIX, '#ffb347', 0.16 * bossCharge, 7);
+      drawAura(BOSS, bx, by, BOSS_PIX, '#fff0d0', 0.14 * bossCharge, 3);
+    }
+    ctx.fillStyle = bodyColor;
+    fillCells(BOSS, bx, by, BOSS_PIX);
+    // 目の周りを塗りつぶしてから目を描く（ドット欠けを防ぐ）
+    ctx.fillRect(bx + 2 * BOSS_PIX, by + 4 * BOSS_PIX, BOSS_PIX * 4, BOSS_PIX * 4);
+    ctx.fillRect(bx + 9 * BOSS_PIX, by + 4 * BOSS_PIX, BOSS_PIX * 4, BOSS_PIX * 4);
+    ctx.fillStyle = eyeColor;
+    ctx.fillRect(bx + 3 * BOSS_PIX, by + 5 * BOSS_PIX, BOSS_PIX * 2, BOSS_PIX * 2);
+    ctx.fillRect(bx + 10 * BOSS_PIX, by + 5 * BOSS_PIX, BOSS_PIX * 2, BOSS_PIX * 2);
   }
 
   const player = {
@@ -256,6 +292,7 @@
   let bossBob = 0;
   let bossFireTimer = 0;
   let bossCharge = 0;
+  let bossHurt = false;
   let finalePhase = 'none'; // none|item|charge|fire|explode|done
   let finaleTimer = 0;
   let orb = null;
@@ -296,6 +333,7 @@
     bossBob = 0;
     bossFireTimer = 0;
     bossCharge = 0;
+    bossHurt = false;
     finalePhase = 'none';
     finaleTimer = 0;
     orb = null;
@@ -374,25 +412,50 @@
     bossActive = false;
   }
 
+  // ビームがボスに当たっている場所（着弾点）
+  function impactPoint() {
+    return { x: BOSS_X + BOSS_W * 0.45, y: bossDrawY() + BOSS_H / 2 };
+  }
+
+  function spawnImpactParticles(n) {
+    const p = impactPoint();
+    for (let i = 0; i < n; i++) {
+      const a = Math.PI * 0.5 + (Math.random() - 0.5) * Math.PI * 1.6; // 主に左へ散る
+      const sp = 0.08 + Math.random() * 0.3;
+      particles.push({
+        x: p.x + (Math.random() - 0.5) * 16, y: p.y + (Math.random() - 0.5) * 26,
+        vx: -Math.abs(Math.cos(a)) * sp, vy: (Math.random() - 0.5) * sp * 1.4,
+        life: 260 + Math.random() * 320, age: 0, size: 2 + Math.random() * 5,
+        color: Math.random() < 0.5 ? '#ffd9a0' : COLOR_BODY,
+      });
+    }
+  }
+
   function updateFinale(dt) {
     finaleTimer += dt;
     if (finalePhase === 'item') {
       orb.x -= 0.5 * dt;
       orb.y += (140 - orb.y) * 0.06;
-      if (orb.x <= player.x + CHAR_W) { orb = null; finalePhase = 'charge'; finaleTimer = 0; }
+      // 離れていても取得できるように広めに判定
+      if (orb.x <= player.x + CHAR_W + 70) { orb = null; finalePhase = 'charge'; finaleTimer = 0; }
     } else if (finalePhase === 'charge') {
-      if (finaleTimer > 700) {
+      if (finaleTimer > CHARGE_MS) {
         finalePhase = 'fire'; finaleTimer = 0;
-        hyperBeam = { x: player.x + CHAR_W, len: 0 };
+        hyperBeam = { reach: 0 };
         flash = 1;
       }
     } else if (finalePhase === 'fire') {
-      hyperBeam.len += 2.4 * dt;
-      if (hyperBeam.x + hyperBeam.len >= BOSS_X + BOSS_W * 0.5) {
-        explodeBoss(); finalePhase = 'explode'; finaleTimer = 0; flash = 1;
+      hyperBeam.reach = Math.min(1, finaleTimer / FIRE_EXTEND_MS);
+      if (hyperBeam.reach >= 1 && bossActive) {
+        bossHurt = true;              // 爆発するまで被弾演出を継続
+        spawnImpactParticles(3);      // 着弾点にパーティクル
       }
+      if (finaleTimer >= FIRE_EXPLODE_AT && bossActive) {
+        explodeBoss(); bossHurt = false; flash = 1;
+      }
+      if (finaleTimer >= FIRE_END_MS) { finalePhase = 'explode'; finaleTimer = 0; hyperBeam = null; }
     } else if (finalePhase === 'explode') {
-      if (finaleTimer > 1400) { finalePhase = 'done'; hyperBeam = null; }
+      if (finaleTimer > 1200) { finalePhase = 'done'; }
     }
   }
 
@@ -609,20 +672,77 @@
       }
     });
 
-    // 決着アイテム
+    // 決着アイテム（自キャラと同じオレンジ・大きめ）
     if (orb) {
-      ctx.fillStyle = 'rgba(255,240,150,0.35)'; ctx.beginPath(); ctx.arc(orb.x, orb.y, 20, 0, 7); ctx.fill();
-      ctx.fillStyle = '#ffd93b'; ctx.beginPath(); ctx.arc(orb.x, orb.y, 11, 0, 7); ctx.fill();
-      ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(orb.x, orb.y, 5, 0, 7); ctx.fill();
+      const og = ctx.createRadialGradient(orb.x, orb.y, 2, orb.x, orb.y, 34);
+      og.addColorStop(0, '#fffaf0');
+      og.addColorStop(0.35, '#ffb347');
+      og.addColorStop(0.65, 'rgba(245,124,43,0.7)');
+      og.addColorStop(1, 'rgba(245,124,43,0)');
+      ctx.fillStyle = og;
+      ctx.beginPath(); ctx.arc(orb.x, orb.y, 34, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = COLOR_BODY;
+      ctx.beginPath(); ctx.arc(orb.x, orb.y, 18, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#fffaf0';
+      ctx.beginPath(); ctx.arc(orb.x, orb.y, 8, 0, Math.PI * 2); ctx.fill();
     }
 
-    // 必殺ハイパービーム
+    // 必殺ハイパービーム（暖色・発射口は「）」・着弾はなめらかな光球）
     if (hyperBeam) {
-      const cy = player.y + CHAR_H / 2, x = hyperBeam.x, len = hyperBeam.len, h = 48;
-      ctx.fillStyle = 'rgba(55,214,122,0.3)'; ctx.fillRect(x, cy - h / 2 - 10, len, h + 20);
-      ctx.fillStyle = 'rgba(123,255,234,0.7)'; ctx.fillRect(x, cy - h / 2, len, h);
-      ctx.fillStyle = '#fff'; ctx.fillRect(x, cy - h * 0.28, len, h * 0.56);
-      ctx.fillStyle = 'rgba(255,255,255,0.9)'; ctx.beginPath(); ctx.arc(x + len, cy, h * 0.6, 0, 7); ctx.fill();
+      const ox = player.x + CHAR_W, oy = player.y + CHAR_H / 2;
+      const tp = impactPoint();
+      const dx = tp.x - ox, dy = tp.y - oy;
+      const ang = Math.atan2(dy, dx);
+      const full = Math.hypot(dx, dy);
+      const len = Math.max(1, full * hyperBeam.reach);
+      const flick = 0.9 + 0.1 * Math.sin(finaleTimer * 0.05);
+
+      ctx.save();
+      ctx.translate(ox, oy);
+      ctx.rotate(ang);
+
+      // 発射口が細く、着弾側が太い先細り形状
+      function beamPath(h0, h1) {
+        ctx.beginPath();
+        ctx.moveTo(0, -h0 / 2);
+        ctx.quadraticCurveTo(h0 * 0.55, 0, 0, h0 / 2); // 「）」の発射口
+        ctx.lineTo(len, h1 / 2);
+        ctx.lineTo(len, -h1 / 2);
+        ctx.closePath();
+      }
+
+      // 外側のグロー
+      ctx.globalAlpha = 0.35 * flick;
+      ctx.fillStyle = COLOR_BODY;
+      beamPath(30, 62); ctx.fill();
+      // 中間
+      ctx.globalAlpha = 0.85;
+      const gm = ctx.createLinearGradient(0, -22, 0, 22);
+      gm.addColorStop(0, 'rgba(245,124,43,0.5)');
+      gm.addColorStop(0.5, '#ffb347');
+      gm.addColorStop(1, 'rgba(245,124,43,0.5)');
+      ctx.fillStyle = gm;
+      beamPath(18, 44); ctx.fill();
+      // 芯
+      ctx.globalAlpha = 1;
+      const gc = ctx.createLinearGradient(0, -11, 0, 11);
+      gc.addColorStop(0, 'rgba(255,240,210,0.7)');
+      gc.addColorStop(0.5, '#fffaf0');
+      gc.addColorStop(1, 'rgba(255,240,210,0.7)');
+      ctx.fillStyle = gc;
+      beamPath(9, 22); ctx.fill();
+
+      // 着弾のなめらかな光球（放射グラデーションで境目を消す）
+      const R = 46 * flick;
+      const rg = ctx.createRadialGradient(len, 0, 2, len, 0, R);
+      rg.addColorStop(0, 'rgba(255,255,255,0.95)');
+      rg.addColorStop(0.35, 'rgba(255,205,120,0.75)');
+      rg.addColorStop(0.7, 'rgba(245,124,43,0.35)');
+      rg.addColorStop(1, 'rgba(245,124,43,0)');
+      ctx.fillStyle = rg;
+      ctx.beginPath(); ctx.arc(len, 0, R, 0, Math.PI * 2); ctx.fill();
+
+      ctx.restore();
     }
 
     // 爆発パーティクル
@@ -644,11 +764,13 @@
     else if (state !== 'running') legs = LEGS_RUN_A;
     else legs = player.runFrame === 0 ? LEGS_RUN_A : LEGS_RUN_B;
 
-    // チャージ中の発光
+    // チャージ中のオーラ（自キャラの形に沿わせる）
     if (finalePhase === 'charge') {
-      const g = 0.4 + 0.3 * Math.sin(finaleTimer * 0.03);
-      ctx.fillStyle = 'rgba(123,255,234,' + g + ')';
-      ctx.fillRect(player.x - 8, player.y - 8, CHAR_W + 16, CHAR_H + 16);
+      const pulse = 0.55 + 0.45 * Math.sin(finaleTimer * 0.02);
+      const rows = BODY_ROWS.concat(legs);
+      drawAura(rows, player.x, player.y, PIX, COLOR_BODY, 0.18 * pulse, 9);
+      drawAura(rows, player.x, player.y, PIX, '#ffb347', 0.20 * pulse, 5);
+      drawAura(rows, player.x, player.y, PIX, '#fff0d0', 0.22 * pulse, 2);
     }
 
     let drawX = player.x, drawY = player.y, bodyColor = COLOR_BODY, visible = true;
