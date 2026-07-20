@@ -2,6 +2,7 @@
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
   const scoreEl = document.getElementById('score');
+  const achPointsEl = document.getElementById('ach-points');
   const bestEl = document.getElementById('best');
   const messageEl = document.getElementById('message');
   const messageText = document.getElementById('message-text');
@@ -21,7 +22,19 @@
   const COLOR_BOSS_DARK = '#1b5e20';
 
   const HIGH_SCORE_KEY = 'orange-jump-highscore';
+  const ACHIEVEMENTS_KEY = 'orange-jump-achievements';
   const MAX_LIVES = 3;
+
+  // 実績の定義（達成時に一度だけptを獲得）
+  const ACHIEVEMENTS = {
+    stage1: { id: 'stage1', name: 'ステージ1クリア', points: 50 },
+    stage2: { id: 'stage2', name: 'ステージ2クリア', points: 50 },
+    stage3: { id: 'stage3', name: 'ステージ3クリア', points: 100 },
+    stage4: { id: 'stage4', name: 'ステージ4クリア', points: 100 },
+    stage5: { id: 'stage5', name: 'ステージ5クリア', points: 100 },
+    bossClear: { id: 'bossClear', name: 'ボスクリア', points: 200 },
+    bossPerfect: { id: 'bossPerfect', name: 'ボスダメージなしクリア', points: 100 },
+  };
 
   // ステージ設定（1〜5＋ボス。末尾までいくと先頭に戻る）
   const START_SPEED = 0.42;      // 通常ステージの開始スピード
@@ -293,6 +306,7 @@
   let bossFireTimer = 0;
   let bossCharge = 0;
   let bossHurt = false;
+  let bossStartLives = MAX_LIVES;  // ボスステージ開始時の生命
   let finalePhase = 'none'; // none|item|charge|fire|explode|done
   let finaleTimer = 0;
   let orb = null;
@@ -300,6 +314,9 @@
   let particles = [];
   let flash = 0;
   let highScore = Number(localStorage.getItem(HIGH_SCORE_KEY) || 0);
+  let unlockedAchievements = JSON.parse(localStorage.getItem(ACHIEVEMENTS_KEY) || '{}');
+  let totalAchievementPoints = 0;
+  for (const id in unlockedAchievements) totalAchievementPoints += unlockedAchievements[id];
 
   // URLの印で途中から開始できる（例: ...?boss ／ ...?finale）確認用
   const BOSS_START = STAGES.slice(0, 5).reduce((s, st) => s + st.len, 0); // 100000
@@ -311,6 +328,17 @@
   const isDebugStart = startDistance > 0;
 
   bestEl.textContent = 'HI ' + String(highScore).padStart(5, '0');
+
+  function unlockAchievement(achId) {
+    if (!unlockedAchievements[achId]) {
+      const ach = ACHIEVEMENTS[achId];
+      unlockedAchievements[achId] = ach.points;
+      totalAchievementPoints += ach.points;
+      localStorage.setItem(ACHIEVEMENTS_KEY, JSON.stringify(unlockedAchievements));
+      return true;
+    }
+    return false;
+  }
 
   function resetGame() {
     obstacles = [];
@@ -334,6 +362,7 @@
     bossFireTimer = 0;
     bossCharge = 0;
     bossHurt = false;
+    bossStartLives = MAX_LIVES;
     finalePhase = 'none';
     finaleTimer = 0;
     orb = null;
@@ -536,6 +565,7 @@
   function update(dt) {
     distance += speed * dt;
     scoreEl.textContent = String(Math.floor(distance / 10)).padStart(5, '0');
+    achPointsEl.textContent = 'PT ' + String(totalAchievementPoints).padStart(5, '0');
 
     const si = stageInfo(distance);
     if (si.cfg.boss) {
@@ -546,8 +576,23 @@
       speed = si.max;
     }
 
-    // ステージ切り替わり
+    // ステージ切り替わり・クリア検出
     if (si.gIdx !== currentStageIndex) {
+      // 前のステージをクリアしたかチェック
+      if (currentStageIndex >= 0) {
+        const prevCycle = Math.floor(currentStageIndex / STAGES.length);
+        const prevIdx = currentStageIndex % STAGES.length;
+        // 最初のサイクル（cycle 0）のみ実績として記録
+        if (prevCycle === 0) {
+          const stageKeys = ['stage1', 'stage2', 'stage3', 'stage4', 'stage5', 'bossClear'];
+          if (prevIdx < stageKeys.length && stageKeys[prevIdx] !== 'bossClear') {
+            unlockAchievement(stageKeys[prevIdx]);
+          } else if (prevIdx === 5) { // ボスステージを出るとき
+            unlockAchievement('bossClear');
+            if (lives === bossStartLives) unlockAchievement('bossPerfect');
+          }
+        }
+      }
       currentStageIndex = si.gIdx;
       stageStartDist = si.startDist;
       stageLen = si.len;
@@ -560,6 +605,7 @@
         banner = { text: 'BOSS STAGE', x: W };
         bossActive = true;
         bossFireTimer = 1600;
+        bossStartLives = lives; // ボス開始時の生命を記録
         stageHeartDone = true; // ボス中は回復ハート無し
       } else {
         banner = { text: 'STAGE ' + si.num, x: W };
@@ -800,6 +846,7 @@
     requestAnimationFrame(loop);
   }
 
+  achPointsEl.textContent = 'PT ' + String(totalAchievementPoints).padStart(5, '0');
   draw();
 
   function onInput(e) {
