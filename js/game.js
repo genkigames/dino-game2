@@ -15,8 +15,11 @@
   const COLOR_GROUND = '#535353';
   const COLOR_OBSTACLE = '#535353';
   const COLOR_CLOUD = '#c9c9c9';
+  const COLOR_HURT = '#e5443b';
+  const COLOR_HEART_EMPTY = '#d0d0d0';
 
   const HIGH_SCORE_KEY = 'orange-jump-highscore';
+  const MAX_LIVES = 3;
 
   // 9x8 pixel grid for the character body (top part, shared by all frames)
   const BODY_ROWS = [
@@ -31,21 +34,48 @@
   const LEGS_RUN_B = ['010000010', '011000110'];
   const LEGS_JUMP  = ['011000110', '000000000'];
 
+  const HEART = [
+    '0110110',
+    '1111111',
+    '1111111',
+    '0111110',
+    '0011100',
+    '0001000',
+  ];
+
   const PIX = 5; // pixel size for the character sprite
   const CHAR_COLS = 9;
   const CHAR_ROWS_BODY = BODY_ROWS.length;
   const CHAR_W = CHAR_COLS * PIX;
   const CHAR_H = (CHAR_ROWS_BODY + 2) * PIX;
 
-  function drawSprite(rows2, x, y) {
+  // 当たり判定を見た目より一回り小さくする余白
+  const HITBOX_MX = 10;
+  const HITBOX_TOP = 8;
+  const HITBOX_BOTTOM = 2;
+
+  function drawSprite(rows2, x, y, bodyColor) {
+    bodyColor = bodyColor || COLOR_BODY;
     const rows = BODY_ROWS.concat(rows2);
     for (let r = 0; r < rows.length; r++) {
       const row = rows[r];
       for (let c = 0; c < row.length; c++) {
         if (row[c] === '1') {
           const isEye = r === 2 && (c === 2 || c === 6);
-          ctx.fillStyle = isEye ? COLOR_DARK : COLOR_BODY;
+          ctx.fillStyle = isEye ? COLOR_DARK : bodyColor;
           ctx.fillRect(x + c * PIX, y + r * PIX, PIX, PIX);
+        }
+      }
+    }
+  }
+
+  function drawHeart(x, y, filled) {
+    const p = 3;
+    ctx.fillStyle = filled ? COLOR_HURT : COLOR_HEART_EMPTY;
+    for (let r = 0; r < HEART.length; r++) {
+      for (let c = 0; c < HEART[r].length; c++) {
+        if (HEART[r][c] === '1') {
+          ctx.fillRect(x + c * p, y + r * p, p, p);
         }
       }
     }
@@ -58,6 +88,7 @@
     gravity: 0.0028,
     jumpVel: -0.62,
     onGround: true,
+    jumpsLeft: 2,
     runFrame: 0,
     runTimer: 0,
   };
@@ -71,6 +102,8 @@
   let state = 'waiting'; // waiting | running | over
   let lastTime = null;
   let nextObstacleAt = 0;
+  let lives = MAX_LIVES;
+  let hurtTimer = 0; // >0の間は無敵＆点滅
   let highScore = Number(localStorage.getItem(HIGH_SCORE_KEY) || 0);
 
   bestEl.textContent = 'HI ' + String(highScore).padStart(5, '0');
@@ -84,9 +117,12 @@
     groundOffset = 0;
     speed = baseSpeed;
     distance = 0;
+    lives = MAX_LIVES;
+    hurtTimer = 0;
     player.y = GROUND_Y - CHAR_H;
     player.vy = 0;
     player.onGround = true;
+    player.jumpsLeft = 2;
     nextObstacleAt = 600 + Math.random() * 400;
     scoreEl.textContent = '00000';
   }
@@ -124,9 +160,10 @@
       requestAnimationFrame(loop);
       return;
     }
-    if (state === 'running' && player.onGround) {
+    if (state === 'running' && player.jumpsLeft > 0) {
       player.vy = player.jumpVel;
       player.onGround = false;
+      player.jumpsLeft--;
     }
   }
 
@@ -149,6 +186,8 @@
 
     groundOffset = (groundOffset + speed * dt) % 20;
 
+    if (hurtTimer > 0) hurtTimer -= dt;
+
     clouds.forEach(cl => {
       cl.x -= speed * dt * 0.3;
       if (cl.x < -60) {
@@ -163,6 +202,7 @@
       player.y = GROUND_Y - CHAR_H;
       player.vy = 0;
       player.onGround = true;
+      player.jumpsLeft = 2;
     }
 
     if (player.onGround) {
@@ -181,18 +221,32 @@
     obstacles.forEach(ob => { ob.x -= speed * dt; });
     obstacles = obstacles.filter(ob => ob.x + ob.w > -10);
 
-    const px1 = player.x + 4, px2 = player.x + CHAR_W - 4;
-    const py1 = player.y + 4, py2 = player.y + CHAR_H;
-    for (const ob of obstacles) {
-      for (const part of ob.parts) {
-        const ox1 = ob.x + part.x;
-        const ox2 = ox1 + part.w;
-        const oy1 = GROUND_Y - part.h;
-        const oy2 = GROUND_Y;
-        if (px2 > ox1 && px1 < ox2 && py2 > oy1 && py1 < oy2) {
+    if (hurtTimer <= 0) {
+      const px1 = player.x + HITBOX_MX;
+      const px2 = player.x + CHAR_W - HITBOX_MX;
+      const py1 = player.y + HITBOX_TOP;
+      const py2 = player.y + CHAR_H - HITBOX_BOTTOM;
+      let hit = false;
+      for (const ob of obstacles) {
+        for (const part of ob.parts) {
+          const ox1 = ob.x + part.x;
+          const ox2 = ox1 + part.w;
+          const oy1 = GROUND_Y - part.h;
+          const oy2 = GROUND_Y;
+          if (px2 > ox1 && px1 < ox2 && py2 > oy1 && py1 < oy2) {
+            hit = true;
+            break;
+          }
+        }
+        if (hit) break;
+      }
+      if (hit) {
+        lives--;
+        if (lives <= 0) {
           endGame();
           return;
         }
+        hurtTimer = 1000;
       }
     }
   }
@@ -219,6 +273,11 @@
       });
     });
 
+    // 左上にハートを表示
+    for (let i = 0; i < MAX_LIVES; i++) {
+      drawHeart(14 + i * 26, 14, i < lives);
+    }
+
     let legs;
     if (!player.onGround) {
       legs = LEGS_JUMP;
@@ -227,7 +286,19 @@
     } else {
       legs = player.runFrame === 0 ? LEGS_RUN_A : LEGS_RUN_B;
     }
-    drawSprite(legs, player.x, player.y);
+
+    let drawX = player.x, drawY = player.y;
+    let bodyColor = COLOR_BODY;
+    let visible = true;
+    if (hurtTimer > 0) {
+      visible = Math.floor(hurtTimer / 80) % 2 === 0; // 点滅
+      if (hurtTimer > 600) {
+        bodyColor = COLOR_HURT; // 一瞬赤く
+        drawX += (Math.random() - 0.5) * 6; // ブレ
+        drawY += (Math.random() - 0.5) * 6;
+      }
+    }
+    if (visible) drawSprite(legs, drawX, drawY, bodyColor);
   }
 
   function loop(ts) {
